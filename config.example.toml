@@ -1,0 +1,24 @@
+# bpir-cashier configuration. Copy to /etc/bitcoinpir/cashier/config.toml.
+listen = "127.0.0.1:8095"
+
+# 32-byte Ed25519 seed from `bpir-cashier keygen` (or `bpir-admin keygen`).
+grant_key_path = "/etc/bitcoinpir/cashier/grant.key"
+# 64-byte seed from `bpir-cashier wallet-seed`. Back it up: it recovers the ecash.
+wallet_seed_path = "/etc/bitcoinpir/cashier/wallet.seed"
+wallet_db_path = "/var/lib/bitcoinpir-cashier/wallet.sqlite"
+# Append-only audit/idempotency log.
+store_path = "/var/lib/bitcoinpir-cashier/grants.jsonl"
+
+# Mints whose ecash is accepted; the browser buys from the first one.
+mints = ["https://mint.example"]
+
+# Lifetime stamped on grants (max 30 days minus 5 minutes skew).
+grant_ttl_secs = 86400
+
+# Browser origins allowed by CORS (empty = any origin; no cookies are used).
+cors_origins = ["https://www.bitcoinpir.org", "https://bitcoinpir.org"]
+
+[[offers]]
+credits = 1000
+amount = 210
+unit = "sat"

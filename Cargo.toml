@@ -1,0 +1,52 @@
+[package]
+name = "bpir-cashier"
+version = "0.1.0"
+edition = "2021"
+authors = ["Bitcoin PIR contributors"]
+description = "BitcoinPIR cashier: sells Ed25519 session grants for Cashu ecash (docs/CASHIER_API.md in Bitcoin-PIR/Bitcoin-PIR)"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/Bitcoin-PIR/cashier"
+publish = false
+
+[[bin]]
+name = "bpir-cashier"
+path = "src/main.rs"
+
+[dependencies]
+# Grant format, signing, and verification — the same crate the PIR servers use.
+pir-session-grant = { git = "https://github.com/Bitcoin-PIR/Bitcoin-PIR.git", rev = "9433842f535482707546fa8b9a82682808d916be" }
+# Cashu wallet (token parsing + swap/receive at the mint) and its SQLite store.
+cdk = { version = "0.18", default-features = false, features = ["wallet"] }
+cdk-sqlite = { version = "0.18", default-features = false, features = ["wallet"] }
+# HTTP.
+axum = { version = "0.8", default-features = false, features = ["http1", "json", "tokio"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "sync", "fs"] }
+tower-http = { version = "0.6", features = ["cors", "trace", "limit"] }
+# Serialization and config.
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+# Crypto helpers.
+sha2 = "0.10"
+hex = "0.4"
+base64 = "0.22"
+getrandom = "0.2"
+zeroize = "1"
+# Operations.
+clap = { version = "4", features = ["derive"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+thiserror = "2"
+anyhow = "1"
+async-trait = "0.1"
+
+[dev-dependencies]
+tempfile = "3"
+http-body-util = "0.1"
+tower = { version = "0.5", features = ["util"] }
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[profile.release]
+strip = "debuginfo"
