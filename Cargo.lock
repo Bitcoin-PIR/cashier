@@ -351,6 +351,7 @@ dependencies = [
  "async-trait",
  "axum",
  "base64 0.22.1",
+ "bip39",
  "cdk",
  "cdk-sqlite",
  "clap",

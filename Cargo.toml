@@ -32,6 +32,8 @@ hex = "0.4"
 base64 = "0.22"
 getrandom = "0.2"
 zeroize = "1"
+# BIP39 phrase generation for the mint seed file (`bpir-cashier mnemonic`).
+bip39 = { version = "2", default-features = false, features = ["rand", "std"] }
 # Operations.
 clap = { version = "4", features = ["derive"] }
 tracing = "0.1"

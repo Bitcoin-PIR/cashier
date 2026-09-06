@@ -64,6 +64,7 @@ cp config.example.toml /etc/bitcoinpir/cashier/config.toml       # edit mints, o
 bpir-cashier serve --config /etc/bitcoinpir/cashier/config.toml
 bpir-cashier balance --config /etc/bitcoinpir/cashier/config.toml   # ecash held per (mint, unit)
 bpir-cashier pubkey --key /etc/bitcoinpir/cashier/grant.key
+bpir-cashier mnemonic --out /etc/bitcoinpir/mint/seed         # BIP39 phrase for a cdk-mintd --seed-file (mode 0400)
 ```
 
 `deploy/bpir-cashier.service` is a hardened systemd unit; put a reverse

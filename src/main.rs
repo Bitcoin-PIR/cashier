@@ -6,6 +6,7 @@
 //! bpir-cashier wallet-seed --out wallet.seed     # Cashu wallet seed
 //! bpir-cashier pubkey --key grant.key            # print the public key for --session-grant-pubkey
 //! bpir-cashier balance --config config.toml      # ecash held per (mint, unit)
+//! bpir-cashier mnemonic --out mint.seed          # BIP39 phrase for cdk-mintd --seed-file
 //! ```
 
 use std::path::PathBuf;
@@ -60,17 +61,31 @@ enum Command {
         #[arg(long)]
         config: PathBuf,
     },
+    /// Generate a BIP39 mnemonic (24 words, 256-bit entropy) into a mode-0400
+    /// file, for a mint's `--seed-file`. The phrase is never printed.
+    Mnemonic {
+        #[arg(long)]
+        out: PathBuf,
+        #[arg(long, default_value_t = 24)]
+        words: usize,
+    },
 }
 
 fn write_secret(path: &PathBuf, bytes: &[u8]) -> anyhow::Result<()> {
+    write_secret_mode(path, bytes, 0o600)
+}
+
+fn write_secret_mode(path: &PathBuf, bytes: &[u8], mode: u32) -> anyhow::Result<()> {
     use std::io::Write;
     let mut options = std::fs::OpenOptions::new();
     options.write(true).create_new(true);
     #[cfg(unix)]
     {
         use std::os::unix::fs::OpenOptionsExt;
-        options.mode(0o600);
+        options.mode(mode);
     }
+    #[cfg(not(unix))]
+    let _ = mode;
     let mut file = options
         .open(path)
         .with_context(|| format!("create {}", path.display()))?;
@@ -132,6 +147,22 @@ async fn main() -> anyhow::Result<()> {
         Command::Pubkey { key } => {
             let seed = zeroize::Zeroizing::new(load_grant_seed(&key)?);
             println!("{}", Issuer::new(&seed, 1).public_key_hex());
+        }
+        Command::Mnemonic { out, words } => {
+            anyhow::ensure!(
+                matches!(words, 12 | 15 | 18 | 21 | 24),
+                "--words must be 12, 15, 18, 21, or 24"
+            );
+            let phrase = zeroize::Zeroizing::new(
+                bip39::Mnemonic::generate_in(bip39::Language::English, words)
+                    .map_err(|e| anyhow::anyhow!("bip39: {e}"))?
+                    .to_string(),
+            );
+            write_secret_mode(&out, format!("{}\n", phrase.as_str()).as_bytes(), 0o400)?;
+            eprintln!(
+                "wrote {words}-word BIP39 mnemonic (mode 0400) to {}",
+                out.display()
+            );
         }
         Command::Balance { config } => {
             let config = Config::load(&config)?;
