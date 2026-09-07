@@ -22,3 +22,8 @@ cors_origins = ["https://www.bitcoinpir.org", "https://bitcoinpir.org"]
 credits = 1000
 amount = 210
 unit = "sat"
+
+# Prices the PIR servers enforce (mirror their flags; informational for clients).
+[costs]
+frame = 1
+harmony_hint_set = 150

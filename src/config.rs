@@ -45,6 +45,40 @@ pub struct Config {
     /// safe because the API uses no cookies and no ambient credentials.
     #[serde(default)]
     pub cors_origins: Vec<String>,
+    /// Prices the PIR servers charge, published in `GET /v1/info` as
+    /// `costs`. Informational: the servers enforce their own flags
+    /// (`--session-grant-hint-credits`); keep both in step.
+    #[serde(default)]
+    pub costs: Costs,
+}
+
+/// Credits per metered unit, mirrored from the servers' flags.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Costs {
+    /// One query-bearing request frame.
+    #[serde(default = "default_frame_cost")]
+    pub frame: u32,
+    /// One HarmonyPIR hint set (`--session-grant-hint-credits`).
+    #[serde(default = "default_hint_set_cost")]
+    pub harmony_hint_set: u32,
+}
+
+fn default_frame_cost() -> u32 {
+    1
+}
+
+fn default_hint_set_cost() -> u32 {
+    150
+}
+
+impl Default for Costs {
+    fn default() -> Self {
+        Self {
+            frame: default_frame_cost(),
+            harmony_hint_set: default_hint_set_cost(),
+        }
+    }
 }
 
 fn default_ttl() -> u64 {
@@ -118,6 +152,9 @@ impl Config {
             return Err(ConfigError::Invalid(format!(
                 "grant_ttl_secs must be 1..={MAX_GRANT_TTL_SECS}"
             )));
+        }
+        if self.costs.frame == 0 || self.costs.harmony_hint_set == 0 {
+            return Err(ConfigError::Invalid("costs must be positive".into()));
         }
         for origin in &self.cors_origins {
             if !(origin.starts_with("https://") || origin.starts_with("http://localhost")) {
@@ -203,6 +240,13 @@ mod tests {
         c.validate().unwrap();
         assert_eq!(c.grant_ttl_secs, 86_400);
         assert!(c.cors_origins.is_empty());
+        assert_eq!(
+            c.costs,
+            Costs {
+                frame: 1,
+                harmony_hint_set: 150
+            }
+        );
         assert!(c.accepts_mint("https://mint.example/"));
         assert!(!c.accepts_mint("https://other.example"));
         assert!(c
@@ -234,6 +278,9 @@ mod tests {
         assert!(c.validate().is_err());
         let mut c = sample();
         c.offers[0].credits = 0;
+        assert!(c.validate().is_err());
+        let mut c = sample();
+        c.costs.harmony_hint_set = 0;
         assert!(c.validate().is_err());
     }
 

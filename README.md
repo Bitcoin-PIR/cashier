@@ -17,7 +17,7 @@ never disagree on the bytes.
 
 | Endpoint | Behaviour |
 | --- | --- |
-| `GET /v1/info` | service name, `cashier_pubkey_hex`, accepted `mints`, `offers`, `grant_ttl_secs` |
+| `GET /v1/info` | service name, `cashier_pubkey_hex`, accepted `mints`, `offers`, `grant_ttl_secs`, `costs` (frame and HarmonyPIR hint-set prices the servers enforce) |
 | `POST /v1/grants` | `{offer, token}` → validate offline (listed offer, accepted mint, exact face value) → swap the token at the mint through a [cdk](https://crates.io/crates/cdk) wallet → sign and return the grant |
 | `GET /healthz` | `ok` |
 

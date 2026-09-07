@@ -15,7 +15,7 @@ use tower_http::cors::{AllowOrigin, CorsLayer};
 use tower_http::limit::RequestBodyLimitLayer;
 
 use crate::cashu::{token_key, SwapError, Swapper, TokenSummary};
-use crate::config::{Config, Offer};
+use crate::config::{Config, Costs, Offer};
 use crate::grant::{IssuedGrant, Issuer};
 use crate::store::{State as TokenState, Store};
 
@@ -42,6 +42,7 @@ struct InfoResponse<'a> {
     mints: &'a [String],
     offers: &'a [Offer],
     grant_ttl_secs: u64,
+    costs: &'a Costs,
 }
 
 #[derive(Deserialize)]
@@ -132,6 +133,7 @@ async fn info(State(state): State<Arc<AppState>>) -> Json<serde_json::Value> {
         mints: &state.config.mints,
         offers: &state.config.offers,
         grant_ttl_secs: state.issuer.ttl_secs(),
+        costs: &state.config.costs,
     };
     Json(serde_json::to_value(body).expect("info serializes"))
 }

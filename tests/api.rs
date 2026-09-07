@@ -201,6 +201,10 @@ async fn info_lists_pubkey_mints_offers_and_ttl_with_cors() {
         serde_json::json!({"credits": 1000, "amount": 210, "unit": "sat"})
     );
     assert_eq!(v["grant_ttl_secs"], 3600);
+    assert_eq!(
+        v["costs"],
+        serde_json::json!({"frame": 1, "harmony_hint_set": 150})
+    );
 }
 
 #[tokio::test]
