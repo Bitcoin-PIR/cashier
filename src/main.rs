@@ -8,6 +8,7 @@
 //! bpir-cashier balance --config config.toml      # ecash held per (mint, unit)
 //! bpir-cashier mnemonic --out mint.seed          # BIP39 phrase for cdk-mintd --seed-file
 //! bpir-cashier settlement --config config.toml   # gas and sat redeemed per PIR server
+//! bpir-cashier arc-seed --out arc.seed           # ARC master seed (per-epoch issuer keys)
 //! ```
 
 use std::path::PathBuf;
@@ -18,6 +19,7 @@ use clap::{Parser, Subcommand};
 use tokio::sync::Mutex;
 
 use bpir_cashier::api::{build_router, AppState};
+use bpir_cashier::arc::ArcIssuer;
 use bpir_cashier::cashu::CdkSwapper;
 use bpir_cashier::config::{read_seed_file, Config};
 use bpir_cashier::grant::Issuer;
@@ -67,6 +69,12 @@ enum Command {
     Settlement {
         #[arg(long)]
         config: PathBuf,
+    },
+    /// Generate the 32-byte ARC master seed (mode 0600); every epoch's
+    /// issuer keys derive from it. Back it up: it is the credentials.
+    ArcSeed {
+        #[arg(long)]
+        out: PathBuf,
     },
     /// Generate a BIP39 mnemonic (24 words, 256-bit entropy) into a mode-0400
     /// file, for a mint's `--seed-file`. The phrase is never printed.
@@ -189,6 +197,15 @@ async fn main() -> anyhow::Result<()> {
                 }
             }
         }
+        Command::ArcSeed { out } => {
+            let mut seed = zeroize::Zeroizing::new([0u8; 32]);
+            getrandom::getrandom(seed.as_mut()).map_err(|e| anyhow::anyhow!("getrandom: {e}"))?;
+            write_secret(&out, seed.as_ref())?;
+            eprintln!(
+                "wrote ARC master seed (32 bytes, mode 0600) to {}",
+                out.display()
+            );
+        }
         Command::Settlement { config } => {
             let config = Config::load(&config)?;
             let store = RedeemStore::open(&config.redeem_store_path())?;
@@ -216,6 +233,18 @@ async fn main() -> anyhow::Result<()> {
             let store = Store::open(&config.store_path)?;
             let redeem_store = RedeemStore::open(&config.redeem_store_path())?;
             let operator_keys = config.operator_keys();
+            let arc = match &config.arc {
+                Some(arc_config) => {
+                    let seed = zeroize::Zeroizing::new(load_grant_seed(&arc_config.seed_path)?);
+                    Some(ArcIssuer::new(
+                        *seed,
+                        arc_config.epoch_secs,
+                        arc_config.grace_secs,
+                        arc_config.presentation_limit,
+                    ))
+                }
+                None => None,
+            };
             if operator_keys.is_empty() {
                 tracing::warn!("operator_pubkeys is empty: POST /v2/redeem refuses every server");
             }
@@ -234,6 +263,7 @@ async fn main() -> anyhow::Result<()> {
                 store = %store.path().display(),
                 redeem_store = %redeem_store.path().display(),
                 operator_keys = operator_keys.len(),
+                arc = arc.is_some(),
                 "bpir-cashier starting"
             );
             let listen = config.listen;
@@ -244,6 +274,7 @@ async fn main() -> anyhow::Result<()> {
                 store: Mutex::new(store),
                 redeem_store: Mutex::new(redeem_store),
                 operator_keys,
+                arc,
                 clock: Box::new(bpir_cashier::unix_now),
             });
             let listener = tokio::net::TcpListener::bind(listen)

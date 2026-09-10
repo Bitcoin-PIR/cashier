@@ -41,6 +41,16 @@ pub enum State {
         mint: String,
         unit: String,
     },
+    /// The mint accepted the token presented to `POST /v2/credentials` and
+    /// an ARC credential was issued under `epoch` for `request_hex`.
+    Credentialed {
+        epoch: u32,
+        request_hex: String,
+        response_hex: String,
+        received: u64,
+        mint: String,
+        unit: String,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

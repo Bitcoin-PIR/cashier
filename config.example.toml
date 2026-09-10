@@ -44,6 +44,19 @@ redeem_max_skew_secs = 300
 # Redemption log (replay index + settlement ledger); default: redeem.jsonl next to store_path.
 # redeem_store_path = "/var/lib/bitcoinpir-cashier/redeem.jsonl"
 
+# ARC credentials (docs/CREDITS.md): one credential = presentation_limit
+# presentations, one credit each. Omit the whole table to sell none.
+[arc]
+# 32-byte master seed from `bpir-cashier arc-seed`; every epoch's issuer keys
+# derive from it. Back it up: it is the credentials.
+seed_path = "/etc/bitcoinpir/cashier/arc.seed"
+epoch_secs = 7776000        # 90 days; credentials are issued under the current epoch
+grace_secs = 2592000        # 30 days after an epoch ends its credentials still spend
+presentation_limit = 100
+[[arc.credential_offers]]   # credits must equal presentation_limit
+credits = 100
+sat = 1000
+
 # Worst-case prices shown to clients in GET /v2/info (informational). Defaults shown.
 [[rate_card]]
 flow = "onion_single_address"
