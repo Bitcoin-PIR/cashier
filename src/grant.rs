@@ -5,6 +5,7 @@
 //! so that a replayed request for the same token maps to the same id, and ids
 //! stay unique across cashier restarts without any counter.
 
+use ed25519_dalek::{Signer, SigningKey};
 use pir_session_grant::{GrantSigner, PublicKey, SessionGrant, GRANT_ID_LEN, SESSION_GRANT_LEN};
 use serde::{Deserialize, Serialize};
 
@@ -20,6 +21,9 @@ pub struct IssuedGrant {
 
 pub struct Issuer {
     signer: GrantSigner,
+    /// The same seed as an Ed25519 key for signing redeem answers
+    /// (`docs/CREDITS.md`), so servers pin one key for both contracts.
+    answer_key: SigningKey,
     ttl_secs: u64,
 }
 
@@ -27,8 +31,14 @@ impl Issuer {
     pub fn new(seed: &[u8; 32], ttl_secs: u64) -> Self {
         Self {
             signer: GrantSigner::from_seed(seed),
+            answer_key: SigningKey::from_bytes(seed),
             ttl_secs,
         }
+    }
+
+    /// Sign arbitrary bytes (a redeem answer preimage) with the issuer key.
+    pub fn sign(&self, message: &[u8]) -> [u8; 64] {
+        self.answer_key.sign(message).to_bytes()
     }
 
     pub fn public_key(&self) -> PublicKey {

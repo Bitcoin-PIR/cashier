@@ -23,6 +23,7 @@ pub mod api;
 pub mod cashu;
 pub mod config;
 pub mod grant;
+pub mod redeem;
 pub mod store;
 
 /// Unix seconds now. The grant crate takes the clock as a parameter; this is

@@ -15,6 +15,14 @@ path = "src/main.rs"
 [dependencies]
 # Grant format, signing, and verification — the same crate the PIR servers use.
 pir-session-grant = { git = "https://github.com/Bitcoin-PIR/Bitcoin-PIR.git", rev = "9433842f535482707546fa8b9a82682808d916be" }
+# Credits contract (gas parameters, /v2/redeem and /v2/info types, signing
+# preimages) and the identity certificate a redeeming server presents; the
+# same revision the PIR servers build from.
+pir-credit = { git = "https://github.com/Bitcoin-PIR/Bitcoin-PIR.git", rev = "3d04bbac776a2681b70b4e5676ae1198e69e905c" }
+pir-identity = { git = "https://github.com/Bitcoin-PIR/Bitcoin-PIR.git", rev = "3d04bbac776a2681b70b4e5676ae1198e69e905c" }
+# Verifies server identity certificates and request signatures; signs
+# redeem answers.
+ed25519-dalek = "2"
 # Cashu wallet (token parsing + swap/receive at the mint) and its SQLite store.
 cdk = { version = "0.18", default-features = false, features = ["wallet"] }
 cdk-sqlite = { version = "0.18", default-features = false, features = ["wallet"] }

@@ -33,6 +33,14 @@ pub enum State {
         mint: String,
         unit: String,
     },
+    /// The mint accepted the token presented through a PIR server's
+    /// `POST /v2/redeem`; its value was booked to that server.
+    Redeemed {
+        server_id: String,
+        received: u64,
+        mint: String,
+        unit: String,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -117,6 +125,14 @@ impl Store {
         self.index
             .values()
             .filter(|s| matches!(s, State::Issued { .. }))
+            .count()
+    }
+
+    /// Number of tokens redeemed through a server.
+    pub fn redeemed_count(&self) -> usize {
+        self.index
+            .values()
+            .filter(|s| matches!(s, State::Redeemed { .. }))
             .count()
     }
 
