@@ -69,6 +69,58 @@ pub struct Config {
     /// (informational; the servers meter gas).
     #[serde(default = "default_rate_card")]
     pub rate_card: Vec<RateCardEntry>,
+    /// ARC credentials (`docs/CREDITS.md`). Absent keeps `POST /v2/credentials`
+    /// and ARC items of `POST /v2/redeem` refused.
+    #[serde(default)]
+    pub arc: Option<ArcConfig>,
+}
+
+/// The `[arc]` table.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ArcConfig {
+    /// 32-byte master seed (raw, or 64 hex characters) from
+    /// `bpir-cashier arc-seed`; every epoch's issuer keys derive from it.
+    pub seed_path: PathBuf,
+    #[serde(default = "default_arc_epoch_secs")]
+    pub epoch_secs: u64,
+    #[serde(default = "default_arc_grace_secs")]
+    pub grace_secs: u64,
+    /// Presentations per credential (one credit each).
+    #[serde(default = "default_arc_limit")]
+    pub presentation_limit: u32,
+    /// Packs on sale at `POST /v2/credentials`; `credits` must equal
+    /// `presentation_limit` (one credential per pack).
+    #[serde(default = "default_credential_offers")]
+    pub credential_offers: Vec<CredentialOffer>,
+}
+
+/// One `[[arc.credential_offers]]` line.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CredentialOffer {
+    pub credits: u64,
+    pub sat: u64,
+}
+
+fn default_arc_epoch_secs() -> u64 {
+    pir_credit::arc::ARC_EPOCH_SECS
+}
+
+fn default_arc_grace_secs() -> u64 {
+    pir_credit::arc::ARC_GRACE_SECS
+}
+
+fn default_arc_limit() -> u32 {
+    pir_credit::arc::ARC_PRESENTATION_LIMIT
+}
+
+fn default_credential_offers() -> Vec<CredentialOffer> {
+    vec![CredentialOffer {
+        credits: u64::from(pir_credit::arc::ARC_PRESENTATION_LIMIT),
+        sat: u64::from(pir_credit::arc::ARC_PRESENTATION_LIMIT)
+            * pir_credit::GasParams::PRODUCTION_2026_09.credit_sat,
+    }]
 }
 
 /// The `[gas]` table: `pir_credit::GasParams` with the 2026-09 defaults.
@@ -280,6 +332,36 @@ impl Config {
                 return Err(ConfigError::Invalid(format!(
                     "rate_card entry has an empty field: {entry:?}"
                 )));
+            }
+        }
+        if let Some(arc) = &self.arc {
+            if arc.epoch_secs < 86_400 {
+                return Err(ConfigError::Invalid(
+                    "arc.epoch_secs must be at least one day".into(),
+                ));
+            }
+            if arc.grace_secs > arc.epoch_secs {
+                return Err(ConfigError::Invalid(
+                    "arc.grace_secs must not exceed arc.epoch_secs".into(),
+                ));
+            }
+            if !(2..=4096).contains(&arc.presentation_limit) {
+                return Err(ConfigError::Invalid(
+                    "arc.presentation_limit must be 2..=4096".into(),
+                ));
+            }
+            if arc.credential_offers.is_empty() {
+                return Err(ConfigError::Invalid(
+                    "arc.credential_offers must list at least one pack".into(),
+                ));
+            }
+            for offer in &arc.credential_offers {
+                if offer.credits != u64::from(arc.presentation_limit) || offer.sat == 0 {
+                    return Err(ConfigError::Invalid(format!(
+                        "arc credential offer must sell exactly {} credits for a positive price: {offer:?}",
+                        arc.presentation_limit
+                    )));
+                }
             }
         }
         for origin in &self.cors_origins {

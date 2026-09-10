@@ -20,6 +20,7 @@
 //! [session grants]: https://github.com/Bitcoin-PIR/Bitcoin-PIR/blob/main/docs/SESSION_GRANTS.md
 
 pub mod api;
+pub mod arc;
 pub mod cashu;
 pub mod config;
 pub mod grant;
