@@ -18,8 +18,8 @@ pir-session-grant = { git = "https://github.com/Bitcoin-PIR/Bitcoin-PIR.git", re
 # Credits contract (gas parameters, /v2/redeem and /v2/info types, signing
 # preimages) and the identity certificate a redeeming server presents; the
 # same revision the PIR servers build from.
-pir-credit = { git = "https://github.com/Bitcoin-PIR/Bitcoin-PIR.git", rev = "3d04bbac776a2681b70b4e5676ae1198e69e905c" }
-pir-identity = { git = "https://github.com/Bitcoin-PIR/Bitcoin-PIR.git", rev = "3d04bbac776a2681b70b4e5676ae1198e69e905c" }
+pir-credit = { git = "https://github.com/Bitcoin-PIR/Bitcoin-PIR.git", rev = "610250714cbe73a3c38733f2c44d4bdc2caff93a" }
+pir-identity = { git = "https://github.com/Bitcoin-PIR/Bitcoin-PIR.git", rev = "610250714cbe73a3c38733f2c44d4bdc2caff93a" }
 # Verifies server identity certificates and request signatures; signs
 # redeem answers.
 ed25519-dalek = "2"

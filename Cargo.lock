@@ -1849,7 +1849,7 @@ checksum = "a89322df9ebe1c1578d689c92318e070967d1042b512afbe49518723f4e6d5cd"
 [[package]]
 name = "pir-credit"
 version = "0.1.0"
-source = "git+https://github.com/Bitcoin-PIR/Bitcoin-PIR.git?rev=3d04bbac776a2681b70b4e5676ae1198e69e905c#3d04bbac776a2681b70b4e5676ae1198e69e905c"
+source = "git+https://github.com/Bitcoin-PIR/Bitcoin-PIR.git?rev=610250714cbe73a3c38733f2c44d4bdc2caff93a#610250714cbe73a3c38733f2c44d4bdc2caff93a"
 dependencies = [
  "serde",
 ]
@@ -1857,7 +1857,7 @@ dependencies = [
 [[package]]
 name = "pir-identity"
 version = "0.1.0"
-source = "git+https://github.com/Bitcoin-PIR/Bitcoin-PIR.git?rev=3d04bbac776a2681b70b4e5676ae1198e69e905c#3d04bbac776a2681b70b4e5676ae1198e69e905c"
+source = "git+https://github.com/Bitcoin-PIR/Bitcoin-PIR.git?rev=610250714cbe73a3c38733f2c44d4bdc2caff93a#610250714cbe73a3c38733f2c44d4bdc2caff93a"
 dependencies = [
  "ed25519-dalek",
  "sha2",
