@@ -18,8 +18,8 @@ pir-session-grant = { git = "https://github.com/Bitcoin-PIR/Bitcoin-PIR.git", re
 # Credits contract (gas parameters, /v2/redeem and /v2/info types, signing
 # preimages) and the identity certificate a redeeming server presents; the
 # same revision the PIR servers build from.
-pir-credit = { git = "https://github.com/Bitcoin-PIR/Bitcoin-PIR.git", rev = "1174240b" }
-pir-identity = { git = "https://github.com/Bitcoin-PIR/Bitcoin-PIR.git", rev = "1174240b" }
+pir-credit = { git = "https://github.com/Bitcoin-PIR/Bitcoin-PIR.git", rev = "1174240b7e5be1f4ac2797ec4169aabcbee04a5b" }
+pir-identity = { git = "https://github.com/Bitcoin-PIR/Bitcoin-PIR.git", rev = "1174240b7e5be1f4ac2797ec4169aabcbee04a5b" }
 # ARC (anonymous rate-limited credentials, draft-01 over P-256): issuance
 # and presentation verification for credits (docs/CREDITS.md).
 arc = { git = "https://github.com/Bitcoin-PIR/arc.git", rev = "de6c1709eee0faa32985d5a452be11904ee95de4" }
