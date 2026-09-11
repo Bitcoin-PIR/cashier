@@ -20,7 +20,8 @@ never disagree on the bytes.
 | `GET /v1/info` | service name, `cashier_pubkey_hex`, accepted `mints`, `offers`, `grant_ttl_secs`, `costs` (frame and HarmonyPIR hint-set prices the servers enforce) |
 | `POST /v1/grants` | `{offer, token}` → validate offline (listed offer, accepted mint, exact face value) → swap the token at the mint through a [cdk](https://crates.io/crates/cdk) wallet → sign and return the grant |
 | `GET /v2/info` | the credits contract ([`docs/CREDITS.md`](https://github.com/Bitcoin-PIR/Bitcoin-PIR/blob/main/docs/CREDITS.md)): `credit_sat`, `gas_per_credit`, `base_gas_per_frame`, `egress_gas_per_mb`, `mints`, sat-priced `offers`, `rate_card` |
-| `POST /v2/redeem` | a PIR server forwards what a client presented (`RedeemRequestV1`, signed by the server's identity key and carrying its operator-signed certificate); the cashier swaps the Cashu token at the mint, books the sats to that server, and answers `RedeemResponseV1` signed by the same key servers pin (`gas_added = sats × gas_per_credit / credit_sat`). ARC presentations are refused with `unsupported_kind` until the ARC release. |
+| `POST /v2/credentials` | pay one listed pack (`credits` = the presentation limit, `sat`) with a Cashu token and a blinded `arc::CredentialRequest`; the cashier swaps the token, blind-issues an ARC credential under the current epoch's key, and answers `CredentialResponseV2` (idempotent per token and request) |
+| `POST /v2/redeem` | a PIR server forwards what a client presented (`RedeemRequestV1`, signed by the server's identity key and carrying its operator-signed certificate); the cashier verifies each item — a Cashu token is swapped at the mint (`gas_added = sats × gas_per_credit / credit_sat`), ARC presentations are verified under their epoch's key with a global tag set per epoch (`gas_per_credit` each, `402 double_spend` on reuse, `402 expired_epoch` outside the epoch or its grace) — books the value to that server, and answers `RedeemResponseV1` signed by the same key servers pin |
 | `GET /healthz` | `ok` |
 
 Rules that matter:
@@ -73,6 +74,7 @@ cp config.example.toml /etc/bitcoinpir/cashier/config.toml       # edit mints, o
 bpir-cashier serve --config /etc/bitcoinpir/cashier/config.toml
 bpir-cashier balance --config /etc/bitcoinpir/cashier/config.toml   # ecash held per (mint, unit)
 bpir-cashier settlement --config /etc/bitcoinpir/cashier/config.toml # gas and sat redeemed per PIR server
+bpir-cashier arc-seed --out /etc/bitcoinpir/cashier/arc.seed        # ARC master seed (per-epoch issuer keys)
 bpir-cashier pubkey --key /etc/bitcoinpir/cashier/grant.key
 bpir-cashier mnemonic --out /etc/bitcoinpir/mint/seed         # BIP39 phrase for a cdk-mintd --seed-file (mode 0400)
 ```
