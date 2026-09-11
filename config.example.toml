@@ -27,3 +27,33 @@ unit = "sat"
 [costs]
 frame = 1
 harmony_hint_set = 150
+
+# Credits contract (docs/CREDITS.md in the main repository), published in
+# GET /v2/info and used to turn redeemed sats into gas. Defaults shown.
+[gas]
+credit_sat = 10
+gas_per_credit = 72000
+base_gas_per_frame = 20
+egress_gas_per_mb = 1000
+
+# Operator identity keys (64 hex) whose certified PIR servers may call
+# POST /v2/redeem. Empty refuses every server.
+operator_pubkeys = []
+# Tolerated clock difference of a redeem request (seconds).
+redeem_max_skew_secs = 300
+# Redemption log (replay index + settlement ledger); default: redeem.jsonl next to store_path.
+# redeem_store_path = "/var/lib/bitcoinpir-cashier/redeem.jsonl"
+
+# Worst-case prices shown to clients in GET /v2/info (informational). Defaults shown.
+[[rate_card]]
+flow = "onion_single_address"
+credits = 10
+[[rate_card]]
+flow = "harmony_fresh_client"
+credits = 5
+[[rate_card]]
+flow = "dpf_single_address"
+credits = 2
+[[rate_card]]
+flow = "oram_single_address"
+credits = 1

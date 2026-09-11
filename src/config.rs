@@ -50,6 +50,105 @@ pub struct Config {
     /// (`--session-grant-hint-credits`); keep both in step.
     #[serde(default)]
     pub costs: Costs,
+    /// Credits contract parameters published in `GET /v2/info` and used to
+    /// turn redeemed sats into gas (`docs/CREDITS.md`).
+    #[serde(default)]
+    pub gas: GasConfig,
+    /// Operator identity keys (64 hex) whose certified servers may redeem
+    /// here. Empty keeps `POST /v2/redeem` refused.
+    #[serde(default)]
+    pub operator_pubkeys: Vec<String>,
+    /// Tolerated difference between a redeem request's clock and ours.
+    #[serde(default = "default_redeem_skew")]
+    pub redeem_max_skew_secs: u64,
+    /// Append-only JSON-lines log of every redemption (replay index and
+    /// settlement ledger). Defaults to `redeem.jsonl` next to `store_path`.
+    #[serde(default)]
+    pub redeem_store_path: Option<PathBuf>,
+    /// Worst-case prices published in `GET /v2/info` as `rate_card`
+    /// (informational; the servers meter gas).
+    #[serde(default = "default_rate_card")]
+    pub rate_card: Vec<RateCardEntry>,
+}
+
+/// The `[gas]` table: `pir_credit::GasParams` with the 2026-09 defaults.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GasConfig {
+    #[serde(default = "default_credit_sat")]
+    pub credit_sat: u64,
+    #[serde(default = "default_gas_per_credit")]
+    pub gas_per_credit: u64,
+    #[serde(default = "default_base_gas_per_frame")]
+    pub base_gas_per_frame: u64,
+    #[serde(default = "default_egress_gas_per_mb")]
+    pub egress_gas_per_mb: u64,
+}
+
+impl GasConfig {
+    pub fn params(&self) -> pir_credit::GasParams {
+        pir_credit::GasParams {
+            credit_sat: self.credit_sat,
+            gas_per_credit: self.gas_per_credit,
+            base_gas_per_frame: self.base_gas_per_frame,
+            egress_gas_per_mb: self.egress_gas_per_mb,
+        }
+    }
+}
+
+impl Default for GasConfig {
+    fn default() -> Self {
+        let p = pir_credit::GasParams::PRODUCTION_2026_09;
+        Self {
+            credit_sat: p.credit_sat,
+            gas_per_credit: p.gas_per_credit,
+            base_gas_per_frame: p.base_gas_per_frame,
+            egress_gas_per_mb: p.egress_gas_per_mb,
+        }
+    }
+}
+
+fn default_credit_sat() -> u64 {
+    pir_credit::GasParams::PRODUCTION_2026_09.credit_sat
+}
+
+fn default_gas_per_credit() -> u64 {
+    pir_credit::GasParams::PRODUCTION_2026_09.gas_per_credit
+}
+
+fn default_base_gas_per_frame() -> u64 {
+    pir_credit::GasParams::PRODUCTION_2026_09.base_gas_per_frame
+}
+
+fn default_egress_gas_per_mb() -> u64 {
+    pir_credit::GasParams::PRODUCTION_2026_09.egress_gas_per_mb
+}
+
+fn default_redeem_skew() -> u64 {
+    300
+}
+
+/// One `[[rate_card]]` line.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RateCardEntry {
+    pub flow: String,
+    pub credits: u64,
+}
+
+fn default_rate_card() -> Vec<RateCardEntry> {
+    [
+        ("onion_single_address", 10),
+        ("harmony_fresh_client", 5),
+        ("dpf_single_address", 2),
+        ("oram_single_address", 1),
+    ]
+    .into_iter()
+    .map(|(flow, credits)| RateCardEntry {
+        flow: flow.to_owned(),
+        credits,
+    })
+    .collect()
 }
 
 /// Credits per metered unit, mirrored from the servers' flags.
@@ -156,6 +255,33 @@ impl Config {
         if self.costs.frame == 0 || self.costs.harmony_hint_set == 0 {
             return Err(ConfigError::Invalid("costs must be positive".into()));
         }
+        self.gas
+            .params()
+            .validate()
+            .map_err(|e| ConfigError::Invalid(format!("gas: {e}")))?;
+        for key in &self.operator_pubkeys {
+            let bytes = hex::decode(key).map_err(|_| {
+                ConfigError::Invalid(format!("operator_pubkeys: {key:?} is not hex"))
+            })?;
+            let bytes: [u8; 32] = bytes.try_into().map_err(|_| {
+                ConfigError::Invalid(format!("operator_pubkeys: {key:?} is not 32 bytes"))
+            })?;
+            ed25519_dalek::VerifyingKey::from_bytes(&bytes).map_err(|_| {
+                ConfigError::Invalid(format!("operator_pubkeys: {key:?} is not an Ed25519 key"))
+            })?;
+        }
+        if self.redeem_max_skew_secs == 0 || self.redeem_max_skew_secs > 3600 {
+            return Err(ConfigError::Invalid(
+                "redeem_max_skew_secs must be 1..=3600".into(),
+            ));
+        }
+        for entry in &self.rate_card {
+            if entry.flow.is_empty() || entry.credits == 0 {
+                return Err(ConfigError::Invalid(format!(
+                    "rate_card entry has an empty field: {entry:?}"
+                )));
+            }
+        }
         for origin in &self.cors_origins {
             if !(origin.starts_with("https://") || origin.starts_with("http://localhost")) {
                 return Err(ConfigError::Invalid(format!(
@@ -176,6 +302,24 @@ impl Config {
     pub fn accepts_mint(&self, mint: &str) -> bool {
         let normalized = mint.trim_end_matches('/');
         self.mints.iter().any(|m| m == normalized)
+    }
+
+    /// Parsed `operator_pubkeys` (validated by [`Config::validate`]).
+    pub fn operator_keys(&self) -> Vec<ed25519_dalek::VerifyingKey> {
+        self.operator_pubkeys
+            .iter()
+            .filter_map(|key| {
+                let bytes: [u8; 32] = hex::decode(key).ok()?.try_into().ok()?;
+                ed25519_dalek::VerifyingKey::from_bytes(&bytes).ok()
+            })
+            .collect()
+    }
+
+    /// `redeem_store_path`, or `redeem.jsonl` next to `store_path`.
+    pub fn redeem_store_path(&self) -> PathBuf {
+        self.redeem_store_path
+            .clone()
+            .unwrap_or_else(|| self.store_path.with_file_name("redeem.jsonl"))
     }
 }
 

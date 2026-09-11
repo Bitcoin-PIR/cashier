@@ -7,6 +7,7 @@
 //! bpir-cashier pubkey --key grant.key            # print the public key for --session-grant-pubkey
 //! bpir-cashier balance --config config.toml      # ecash held per (mint, unit)
 //! bpir-cashier mnemonic --out mint.seed          # BIP39 phrase for cdk-mintd --seed-file
+//! bpir-cashier settlement --config config.toml   # gas and sat redeemed per PIR server
 //! ```
 
 use std::path::PathBuf;
@@ -20,6 +21,7 @@ use bpir_cashier::api::{build_router, AppState};
 use bpir_cashier::cashu::CdkSwapper;
 use bpir_cashier::config::{read_seed_file, Config};
 use bpir_cashier::grant::Issuer;
+use bpir_cashier::redeem::RedeemStore;
 use bpir_cashier::store::Store;
 
 #[derive(Parser)]
@@ -58,6 +60,11 @@ enum Command {
     },
     /// Print the ecash balance the cashier holds per (mint, unit).
     Balance {
+        #[arg(long)]
+        config: PathBuf,
+    },
+    /// Print gas and sat redeemed per PIR server (`POST /v2/redeem` ledger).
+    Settlement {
         #[arg(long)]
         config: PathBuf,
     },
@@ -182,6 +189,17 @@ async fn main() -> anyhow::Result<()> {
                 }
             }
         }
+        Command::Settlement { config } => {
+            let config = Config::load(&config)?;
+            let store = RedeemStore::open(&config.redeem_store_path())?;
+            println!("server_id redemptions gas sat");
+            for (server_id, totals) in store.totals() {
+                println!(
+                    "{server_id} {} {} {}",
+                    totals.redemptions, totals.gas, totals.sat
+                );
+            }
+        }
         Command::Serve { config } => {
             let config = Config::load(&config)?;
             let grant_seed = zeroize::Zeroizing::new(load_grant_seed(&config.grant_key_path)?);
@@ -196,6 +214,11 @@ async fn main() -> anyhow::Result<()> {
             )
             .await?;
             let store = Store::open(&config.store_path)?;
+            let redeem_store = RedeemStore::open(&config.redeem_store_path())?;
+            let operator_keys = config.operator_keys();
+            if operator_keys.is_empty() {
+                tracing::warn!("operator_pubkeys is empty: POST /v2/redeem refuses every server");
+            }
             let pending = store.pending_keys();
             if !pending.is_empty() {
                 tracing::warn!(count = pending.len(), "tokens with unknown swap outcome in the store; reconcile against the wallet balance");
@@ -207,7 +230,10 @@ async fn main() -> anyhow::Result<()> {
                 offers = config.offers.len(),
                 grant_ttl_secs = config.grant_ttl_secs,
                 issued_grants = store.issued_count(),
+                redeemed_tokens = store.redeemed_count(),
                 store = %store.path().display(),
+                redeem_store = %redeem_store.path().display(),
+                operator_keys = operator_keys.len(),
                 "bpir-cashier starting"
             );
             let listen = config.listen;
@@ -216,6 +242,8 @@ async fn main() -> anyhow::Result<()> {
                 issuer,
                 swapper: Box::new(swapper),
                 store: Mutex::new(store),
+                redeem_store: Mutex::new(redeem_store),
+                operator_keys,
                 clock: Box::new(bpir_cashier::unix_now),
             });
             let listener = tokio::net::TcpListener::bind(listen)

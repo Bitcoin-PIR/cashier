@@ -9,8 +9,12 @@ use bpir_cashier::api::{build_router, AppState};
 use bpir_cashier::cashu::{token_key, SwapError, Swapper, TokenSummary};
 use bpir_cashier::config::{Config, Offer};
 use bpir_cashier::grant::Issuer;
+use bpir_cashier::redeem::RedeemStore;
 use bpir_cashier::store::{State as TokenState, Store};
+use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
 use http_body_util::BodyExt;
+use pir_credit::issuer::{RedeemItemV1, RedeemRequestV1, RedeemResponseV1, REDEEM_NONCE_LEN};
+use pir_identity::{sign_identity_cert, IdentityCert};
 use pir_session_grant::{SessionGrant, TrustedIssuers};
 use tokio::sync::Mutex;
 use tower::ServiceExt;
@@ -89,11 +93,14 @@ fn harness(script: Vec<Result<u64, SwapError>>) -> Harness {
 fn harness_in(dir: tempfile::TempDir, script: Vec<Result<u64, SwapError>>) -> Harness {
     let config = config(dir.path());
     let store = Store::open(&config.store_path).unwrap();
+    let redeem_store = RedeemStore::open(&config.redeem_store_path()).unwrap();
     let state = Arc::new(AppState {
         config,
         issuer: Issuer::new(&[5u8; 32], 3600),
         swapper: Box::new(FakeSwapper::new(script)),
         store: Mutex::new(store),
+        redeem_store: Mutex::new(redeem_store),
+        operator_keys: vec![operator_key().verifying_key()],
         clock: Box::new(|| CLOCK.load(Ordering::SeqCst)),
     });
     Harness {
@@ -376,4 +383,235 @@ async fn issued_grants_survive_a_restart() {
     let (s, b) = post_grant(&h.app, &offer(1000, 210), &token).await;
     assert_eq!(s, StatusCode::OK);
     assert_eq!(b, first.0);
+}
+
+// ─── Credits: /v2/info and /v2/redeem (docs/CREDITS.md) ─────────────────────
+
+fn operator_key() -> SigningKey {
+    SigningKey::from_bytes(&[21u8; 32])
+}
+
+fn server_key() -> SigningKey {
+    SigningKey::from_bytes(&[22u8; 32])
+}
+
+fn server_cert(operator: &SigningKey, server_id: &str) -> IdentityCert {
+    sign_identity_cert(
+        operator,
+        server_id,
+        server_key().verifying_key().to_bytes(),
+        0,
+        0,
+    )
+}
+
+fn redeem_request(
+    cert: &IdentityCert,
+    server_id: &str,
+    nonce: [u8; REDEEM_NONCE_LEN],
+    items: &[(u8, Vec<u8>)],
+) -> String {
+    let unix_time = CLOCK.load(Ordering::SeqCst);
+    let borrowed: Vec<(u8, &[u8])> = items.iter().map(|(k, p)| (*k, p.as_slice())).collect();
+    let preimage = RedeemRequestV1::signing_preimage(server_id, &nonce, unix_time, &borrowed);
+    serde_json::to_string(&RedeemRequestV1 {
+        server_id: server_id.to_owned(),
+        identity_cert_hex: hex::encode(cert.encode()),
+        nonce_hex: hex::encode(nonce),
+        unix_time,
+        items: items
+            .iter()
+            .map(|(kind, payload)| RedeemItemV1 {
+                kind: *kind,
+                payload_hex: hex::encode(payload),
+            })
+            .collect(),
+        signature_hex: hex::encode(server_key().sign(&preimage).to_bytes()),
+    })
+    .unwrap()
+}
+
+async fn post_redeem(app: &axum::Router, body: String) -> (StatusCode, serde_json::Value) {
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/v2/redeem")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(body))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let status = response.status();
+    let bytes = response.into_body().collect().await.unwrap().to_bytes();
+    (
+        status,
+        serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null),
+    )
+}
+
+#[tokio::test]
+async fn info_v2_publishes_gas_parameters_sat_offers_and_the_rate_card() {
+    let h = harness(vec![]);
+    let response = h
+        .app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/v2/info")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let bytes = response.into_body().collect().await.unwrap().to_bytes();
+    let v: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(v["service"], "bitcoinpir-cashier");
+    assert_eq!(v["version"], 2);
+    assert_eq!(v["credit_sat"], 10);
+    assert_eq!(v["gas_per_credit"], 72_000);
+    assert_eq!(v["base_gas_per_frame"], 20);
+    assert_eq!(v["egress_gas_per_mb"], 1_000);
+    assert_eq!(v["mints"], serde_json::json!([MINT]));
+    assert_eq!(
+        v["offers"][0],
+        serde_json::json!({"credits": 1000, "sat": 210})
+    );
+    assert!(v.get("arc").is_none());
+    assert_eq!(
+        v["rate_card"][0],
+        serde_json::json!({"flow": "onion_single_address", "credits": 10})
+    );
+    assert_eq!(v["rate_card"].as_array().unwrap().len(), 4);
+}
+
+#[tokio::test]
+async fn redeem_settles_a_cashu_token_and_replays_the_signed_answer() {
+    let h = harness(vec![Ok(200)]);
+    let cert = server_cert(&operator_key(), "pir1");
+    let token = fake_token(&[128, 64, 8]);
+    let nonce = [0x33u8; REDEEM_NONCE_LEN];
+    let body = redeem_request(&cert, "pir1", nonce, &[(1, token.as_bytes().to_vec())]);
+    let (status, answer) = post_redeem(&h.app, body.clone()).await;
+    assert_eq!(status, StatusCode::OK, "{answer}");
+    // 200 sat received at 72,000 gas per 10 sat.
+    assert_eq!(answer["gas_added"], 1_440_000);
+    assert_eq!(answer["sat_value"], 200);
+    assert_eq!(answer["items_accepted"], 1);
+    let parsed: RedeemResponseV1 = serde_json::from_value(answer.clone()).unwrap();
+    let preimage = RedeemResponseV1::signing_preimage(&nonce, 1_440_000, 200, 1);
+    let signature =
+        Signature::from_slice(&hex::decode(&parsed.issuer_signature_hex).unwrap()).unwrap();
+    VerifyingKey::from_bytes(&h.state.issuer.public_key())
+        .unwrap()
+        .verify(&preimage, &signature)
+        .unwrap();
+
+    // Same nonce again: the stored answer, byte for byte, and no mint call
+    // (the fake mint's script is empty now and would panic).
+    let (status2, answer2) = post_redeem(&h.app, body).await;
+    assert_eq!(status2, StatusCode::OK);
+    assert_eq!(answer2, answer);
+
+    // The token is booked to pir1 and the ledger knows it.
+    let summary = TokenSummary::parse(&token).unwrap();
+    let key_hex = hex::encode(token_key(&summary.secrets));
+    assert!(matches!(
+        h.state.store.lock().await.get(&key_hex),
+        Some(TokenState::Redeemed { server_id, received: 200, .. }) if server_id == "pir1"
+    ));
+    let redeem_store = h.state.redeem_store.lock().await;
+    let totals = &redeem_store.totals()["pir1"];
+    assert_eq!(
+        (totals.redemptions, totals.gas, totals.sat),
+        (1, 1_440_000, 200)
+    );
+}
+
+#[tokio::test]
+async fn redeem_refuses_foreign_servers_reused_tokens_and_unsupported_kinds() {
+    let h = harness(vec![
+        Ok(210),
+        Err(SwapError::Rejected("already spent".into())),
+    ]);
+    let cert = server_cert(&operator_key(), "pir1");
+    let token = fake_token(&[128, 64, 16, 2]);
+
+    // A certificate from an operator this cashier does not serve.
+    let foreign_cert = server_cert(&SigningKey::from_bytes(&[23u8; 32]), "pir1");
+    let body = redeem_request(
+        &foreign_cert,
+        "pir1",
+        [1u8; 16],
+        &[(1, token.as_bytes().to_vec())],
+    );
+    let (status, answer) = post_redeem(&h.app, body).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED, "{answer}");
+    assert_eq!(answer["error"], "unauthorized");
+
+    // A token that already bought a grant cannot be redeemed as credits.
+    let (status, _) = post_grant(&h.app, &offer(1000, 210), &token).await;
+    assert_eq!(status, StatusCode::OK);
+    let body = redeem_request(&cert, "pir1", [2u8; 16], &[(1, token.as_bytes().to_vec())]);
+    let (status, answer) = post_redeem(&h.app, body).await;
+    assert_eq!(status, StatusCode::PAYMENT_REQUIRED, "{answer}");
+    assert_eq!(answer["error"], "already_redeemed");
+
+    // The mint rejects a fresh token: 402, nothing booked.
+    let rejected = fake_token(&[4]);
+    let body = redeem_request(
+        &cert,
+        "pir1",
+        [3u8; 16],
+        &[(1, rejected.as_bytes().to_vec())],
+    );
+    let (status, answer) = post_redeem(&h.app, body).await;
+    assert_eq!(status, StatusCode::PAYMENT_REQUIRED, "{answer}");
+    assert_eq!(answer["error"], "token_rejected");
+    assert!(h.state.redeem_store.lock().await.totals().is_empty());
+
+    // ARC presentations are announced, not accepted, in this release.
+    let body = redeem_request(&cert, "pir1", [4u8; 16], &[(2, vec![9, 9, 9])]);
+    let (status, answer) = post_redeem(&h.app, body).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{answer}");
+    assert_eq!(answer["error"], "unsupported_kind");
+
+    // A token from a mint the cashier does not accept.
+    let other_mint = bpir_cashier_test_token("https://other.example", "sat", &[8]);
+    let body = redeem_request(
+        &cert,
+        "pir1",
+        [5u8; 16],
+        &[(1, other_mint.as_bytes().to_vec())],
+    );
+    let (status, answer) = post_redeem(&h.app, body).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{answer}");
+    assert_eq!(answer["error"], "mint_not_accepted");
+
+    // A stale request clock.
+    let stale = {
+        let nonce = [6u8; 16];
+        let unix_time = CLOCK.load(Ordering::SeqCst) - 3600;
+        let payload = token.as_bytes().to_vec();
+        let preimage =
+            RedeemRequestV1::signing_preimage("pir1", &nonce, unix_time, &[(1, &payload)]);
+        serde_json::to_string(&RedeemRequestV1 {
+            server_id: "pir1".into(),
+            identity_cert_hex: hex::encode(cert.encode()),
+            nonce_hex: hex::encode(nonce),
+            unix_time,
+            items: vec![RedeemItemV1 {
+                kind: 1,
+                payload_hex: hex::encode(&payload),
+            }],
+            signature_hex: hex::encode(server_key().sign(&preimage).to_bytes()),
+        })
+        .unwrap()
+    };
+    let (status, answer) = post_redeem(&h.app, stale).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{answer}");
+    assert_eq!(answer["error"], "invalid_request");
 }

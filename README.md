@@ -19,6 +19,8 @@ never disagree on the bytes.
 | --- | --- |
 | `GET /v1/info` | service name, `cashier_pubkey_hex`, accepted `mints`, `offers`, `grant_ttl_secs`, `costs` (frame and HarmonyPIR hint-set prices the servers enforce) |
 | `POST /v1/grants` | `{offer, token}` → validate offline (listed offer, accepted mint, exact face value) → swap the token at the mint through a [cdk](https://crates.io/crates/cdk) wallet → sign and return the grant |
+| `GET /v2/info` | the credits contract ([`docs/CREDITS.md`](https://github.com/Bitcoin-PIR/Bitcoin-PIR/blob/main/docs/CREDITS.md)): `credit_sat`, `gas_per_credit`, `base_gas_per_frame`, `egress_gas_per_mb`, `mints`, sat-priced `offers`, `rate_card` |
+| `POST /v2/redeem` | a PIR server forwards what a client presented (`RedeemRequestV1`, signed by the server's identity key and carrying its operator-signed certificate); the cashier swaps the Cashu token at the mint, books the sats to that server, and answers `RedeemResponseV1` signed by the same key servers pin (`gas_added = sats × gas_per_credit / credit_sat`). ARC presentations are refused with `unsupported_kind` until the ARC release. |
 | `GET /healthz` | `ok` |
 
 Rules that matter:
@@ -39,6 +41,13 @@ Rules that matter:
 - **No secrets on the PIR hosts.** The cashier is the only component that
   holds the grant signing seed and the wallet seed. Servers pin the public
   key with `--session-grant-pubkey`.
+- **Redeem is authenticated and replay-safe.** Only servers certified by an
+  operator key in `operator_pubkeys` may redeem; `server_id` must match the
+  certificate; a repeated `(server_id, nonce)` returns the stored signed
+  answer without touching the mint; a token that already bought a grant or
+  was redeemed once answers `402 already_redeemed`. Every redemption is
+  appended to `redeem.jsonl`, the per-server settlement ledger
+  (`bpir-cashier settlement --config …`).
 
 ## Build
 
@@ -63,6 +72,7 @@ cp config.example.toml /etc/bitcoinpir/cashier/config.toml       # edit mints, o
 # run
 bpir-cashier serve --config /etc/bitcoinpir/cashier/config.toml
 bpir-cashier balance --config /etc/bitcoinpir/cashier/config.toml   # ecash held per (mint, unit)
+bpir-cashier settlement --config /etc/bitcoinpir/cashier/config.toml # gas and sat redeemed per PIR server
 bpir-cashier pubkey --key /etc/bitcoinpir/cashier/grant.key
 bpir-cashier mnemonic --out /etc/bitcoinpir/mint/seed         # BIP39 phrase for a cdk-mintd --seed-file (mode 0400)
 ```
@@ -77,7 +87,12 @@ On every PIR server:
 ```sh
 unified_server … --session-grant-pubkey /etc/bitcoinpir/cashier.pub   # 64 hex chars from keygen
 # add --require-session-grant to close the free path
+# credits: --credit-issuer-url https://cashier.bitcoinpir.org (answers verify under the same key)
+#          add --require-credits once clients present credits
 ```
+
+The cashier's `operator_pubkeys` must list the operator key that signed the
+servers' identity certificates, or `POST /v2/redeem` refuses them.
 
 ### Files the operator owns
 
