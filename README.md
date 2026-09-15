@@ -68,7 +68,7 @@ bpir-cashier keygen --out /etc/bitcoinpir/cashier/grant.key      # prints the pu
 bpir-cashier wallet-seed --out /etc/bitcoinpir/cashier/wallet.seed
 
 # config
-cp config.example.toml /etc/bitcoinpir/cashier/config.toml       # edit mints, offers, TTL, CORS
+cp config.example.toml /etc/bitcoinpir/cashier/config.toml       # edit mints, offers (none = /v1 sales closed), TTL, CORS
 
 # run
 bpir-cashier serve --config /etc/bitcoinpir/cashier/config.toml

@@ -35,7 +35,12 @@ pub struct Config {
     pub store_path: PathBuf,
     /// Mints whose ecash is accepted (https only).
     pub mints: Vec<String>,
-    /// Packs on sale.
+    /// Session-grant packs on sale over `/v1`. Leave it out (or empty) to
+    /// close `/v1` sales: `/v1/info` lists no offers and `POST /v1/grants`
+    /// answers `unknown offer`, while grants already issued keep their
+    /// credits until they expire. Credits (v2) packs are
+    /// `[[arc.credential_offers]]`.
+    #[serde(default)]
     pub offers: Vec<Offer>,
     /// Lifetime stamped on issued grants. The PIR servers refuse grants
     /// living longer than 30 days.
@@ -279,11 +284,6 @@ impl Config {
                 )));
             }
         }
-        if self.offers.is_empty() {
-            return Err(ConfigError::Invalid(
-                "offers must list at least one pack".into(),
-            ));
-        }
         for offer in &self.offers {
             if offer.credits == 0 || offer.amount == 0 || offer.unit.is_empty() {
                 return Err(ConfigError::Invalid(format!(
@@ -489,6 +489,33 @@ mod tests {
                 unit: "sat".into()
             })
             .is_none());
+    }
+
+    #[test]
+    fn no_offers_closes_v1_sales() {
+        let c: Config = toml::from_str(
+            r#"
+            listen = "127.0.0.1:8095"
+            grant_key_path = "grant.key"
+            wallet_seed_path = "wallet.seed"
+            wallet_db_path = "wallet.sqlite"
+            store_path = "grants.jsonl"
+            mints = ["https://mint.example"]
+            "#,
+        )
+        .unwrap();
+        c.validate().unwrap();
+        assert!(c.offers.is_empty());
+        assert!(c
+            .find_offer(&Offer {
+                credits: 1000,
+                amount: 210,
+                unit: "sat".into()
+            })
+            .is_none());
+        let mut c = sample();
+        c.offers.clear();
+        c.validate().unwrap();
     }
 
     #[test]

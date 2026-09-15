@@ -18,6 +18,10 @@ grant_ttl_secs = 86400
 # Browser origins allowed by CORS (empty = any origin; no cookies are used).
 cors_origins = ["https://www.bitcoinpir.org", "https://bitcoinpir.org"]
 
+# Session-grant packs (/v1). Remove every [[offers]] block to stop selling
+# grants: /v1/info then lists no offers and POST /v1/grants answers
+# "unknown offer"; grants already issued keep their credits until they
+# expire. Credits (v2) packs are [[arc.credential_offers]] below.
 [[offers]]
 credits = 1000
 amount = 210
