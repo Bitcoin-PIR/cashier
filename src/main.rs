@@ -123,8 +123,13 @@ fn load_wallet_seed(path: &std::path::Path) -> anyhow::Result<[u8; 64]> {
     Ok(out)
 }
 
+/// Wallet units: every `/v1` offer's unit, plus `sat`. The `/v2` paths
+/// (Cashu items on `/v2/redeem`, `/v2/credentials`) take sat tokens only and
+/// must keep working with `/v1` sales closed (no `offers`), so `sat` is
+/// always there.
 fn units(config: &Config) -> Vec<String> {
     let mut units: Vec<String> = config.offers.iter().map(|o| o.unit.clone()).collect();
+    units.push("sat".to_string());
     units.sort();
     units.dedup();
     units
@@ -289,4 +294,43 @@ async fn main() -> anyhow::Result<()> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn config(offers: &str) -> Config {
+        toml::from_str(&format!(
+            r#"
+            listen = "127.0.0.1:8095"
+            grant_key_path = "grant.key"
+            wallet_seed_path = "wallet.seed"
+            wallet_db_path = "wallet.sqlite"
+            store_path = "grants.jsonl"
+            mints = ["https://mint.example"]
+            {offers}
+            "#
+        ))
+        .unwrap()
+    }
+
+    #[test]
+    fn sat_wallet_exists_with_v1_sales_closed() {
+        // Regression: with no `[[offers]]` the cashier opened no wallet at
+        // all, and `/v2/credentials` refused every token with
+        // "no wallet for <mint> (sat)".
+        assert_eq!(units(&config("")), vec!["sat".to_string()]);
+    }
+
+    #[test]
+    fn offer_units_are_kept_and_deduplicated() {
+        let sat = "[[offers]]\ncredits = 1000\namount = 210\nunit = \"sat\"";
+        assert_eq!(units(&config(sat)), vec!["sat".to_string()]);
+        let usd = "[[offers]]\ncredits = 10\namount = 1\nunit = \"usd\"";
+        assert_eq!(
+            units(&config(usd)),
+            vec!["sat".to_string(), "usd".to_string()]
+        );
+    }
 }
