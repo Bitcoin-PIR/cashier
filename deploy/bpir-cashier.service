@@ -1,5 +1,5 @@
 [Unit]
-Description=BitcoinPIR cashier (session grants for Cashu ecash)
+Description=BitcoinPIR cashier (credit issuer for Cashu ecash)
 After=network-online.target
 Wants=network-online.target
 

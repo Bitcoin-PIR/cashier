@@ -2,9 +2,9 @@
 //! in-memory index keyed by the token key.
 //!
 //! Each line is one [`Event`]; the last event for a key is its state. The file
-//! is the operator's reconciliation log (every token seen, every grant
-//! issued, every swap failure) and survives restarts: the cashier replays it
-//! at startup. Writes are appended with `fsync` before the request proceeds.
+//! is the operator's reconciliation log (every token seen, what it bought,
+//! every swap failure) and survives restarts: the cashier replays it at
+//! startup. Writes are appended with `fsync` before the request proceeds.
 
 use std::collections::HashMap;
 use std::fs::{File, OpenOptions};
@@ -13,7 +13,16 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::grant::IssuedGrant;
+/// A v1 session grant, as issued before the grants were retired (2026-09).
+/// Kept so old log lines replay and their tokens stay spent.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct IssuedGrant {
+    pub grant_base64: String,
+    pub grant_id_hex: String,
+    pub credits: u32,
+    pub issued_at: u64,
+    pub expires_at: u64,
+}
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "state", rename_all = "snake_case")]
@@ -24,7 +33,8 @@ pub enum State {
     /// The swap failed and the mint did not consume the token (or reported
     /// it as already spent). The client may retry with the same token.
     Failed { at: u64, reason: String },
-    /// The mint accepted the token and a grant was signed.
+    /// Retired v1 path: the mint accepted the token and a session grant was
+    /// signed. Only replayed from old logs; the token counts as spent.
     Issued {
         grant: IssuedGrant,
         /// Value the mint actually credited (may be below the face value
@@ -130,14 +140,6 @@ impl Store {
         Ok(())
     }
 
-    /// Number of tokens with an issued grant (for the startup log line).
-    pub fn issued_count(&self) -> usize {
-        self.index
-            .values()
-            .filter(|s| matches!(s, State::Issued { .. }))
-            .count()
-    }
-
     /// Number of tokens redeemed through a server.
     pub fn redeemed_count(&self) -> usize {
         self.index
@@ -176,7 +178,7 @@ mod tests {
     }
 
     #[test]
-    fn replay_keeps_the_last_state_per_key() {
+    fn replay_keeps_the_last_state_per_key_including_retired_grants() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("grants.jsonl");
         {
@@ -202,7 +204,6 @@ mod tests {
         assert_eq!(store.get("k1"), Some(&issued(1000)));
         assert_eq!(store.get("k2"), Some(&State::Pending { first_seen: 5 }));
         assert!(matches!(store.get("k3"), Some(State::Failed { .. })));
-        assert_eq!(store.issued_count(), 1);
         assert_eq!(store.pending_keys(), vec!["k2".to_string()]);
         assert_eq!(std::fs::read_to_string(&path).unwrap().lines().count(), 4);
     }

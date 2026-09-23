@@ -13,8 +13,6 @@ name = "bpir-cashier"
 path = "src/main.rs"
 
 [dependencies]
-# Grant format, signing, and verification — the same crate the PIR servers use.
-pir-session-grant = { git = "https://github.com/Bitcoin-PIR/Bitcoin-PIR.git", rev = "9433842f535482707546fa8b9a82682808d916be" }
 # Credits contract (gas parameters, /v2/redeem and /v2/info types, signing
 # preimages) and the identity certificate a redeeming server presents; the
 # same revision the PIR servers build from.
@@ -43,7 +41,6 @@ toml = "0.8"
 # Crypto helpers.
 sha2 = "0.10"
 hex = "0.4"
-base64 = "0.22"
 getrandom = "0.2"
 zeroize = "1"
 # BIP39 phrase generation for the mint seed file (`bpir-cashier mnemonic`).
