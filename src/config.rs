@@ -6,55 +6,29 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-/// One purchasable pack, exactly as `GET /v1/info` lists it.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Offer {
-    /// Credits the grant carries (one credit per query-bearing frame).
-    pub credits: u32,
-    /// Price in `unit`.
-    pub amount: u64,
-    /// Cashu currency unit, e.g. `sat`.
-    pub unit: String,
-}
-
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
     /// Socket the HTTP server binds. Put a reverse proxy or a Cloudflare
     /// tunnel in front; the cashier speaks plain HTTP.
     pub listen: SocketAddr,
-    /// 32-byte Ed25519 seed (raw, or 64 hex characters) that signs grants.
-    /// The PIR servers pin the matching public key.
+    /// 32-byte Ed25519 issuer seed (raw, or 64 hex characters) that signs
+    /// every `POST /v2/redeem` answer. The PIR servers pin the matching
+    /// public key (`--credit-issuer-pubkey`). The name predates credits.
     pub grant_key_path: PathBuf,
     /// 64-byte seed (raw, or 128 hex characters) for the Cashu wallet keys.
     pub wallet_seed_path: PathBuf,
     /// SQLite file the Cashu wallet keeps its proofs in.
     pub wallet_db_path: PathBuf,
-    /// Append-only JSON-lines file recording every token seen and every
-    /// grant issued (idempotency and operator reconciliation).
+    /// Append-only JSON-lines file recording every token seen and what it
+    /// bought (idempotency and operator reconciliation).
     pub store_path: PathBuf,
     /// Mints whose ecash is accepted (https only).
     pub mints: Vec<String>,
-    /// Session-grant packs on sale over `/v1`. Leave it out (or empty) to
-    /// close `/v1` sales: `/v1/info` lists no offers and `POST /v1/grants`
-    /// answers `unknown offer`, while grants already issued keep their
-    /// credits until they expire. Credits (v2) packs are
-    /// `[[arc.credential_offers]]`.
-    #[serde(default)]
-    pub offers: Vec<Offer>,
-    /// Lifetime stamped on issued grants. The PIR servers refuse grants
-    /// living longer than 30 days.
-    #[serde(default = "default_ttl")]
-    pub grant_ttl_secs: u64,
     /// Browser origins allowed by CORS. Empty means any origin, which is
     /// safe because the API uses no cookies and no ambient credentials.
     #[serde(default)]
     pub cors_origins: Vec<String>,
-    /// Prices the PIR servers charge, published in `GET /v1/info` as
-    /// `costs`. Informational: the servers enforce their own flags
-    /// (`--session-grant-hint-credits`); keep both in step.
-    #[serde(default)]
-    pub costs: Costs,
     /// Credits contract parameters published in `GET /v2/info` and used to
     /// turn redeemed sats into gas (`docs/CREDITS.md`).
     #[serde(default)]
@@ -208,44 +182,6 @@ fn default_rate_card() -> Vec<RateCardEntry> {
     .collect()
 }
 
-/// Credits per metered unit, mirrored from the servers' flags.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct Costs {
-    /// One query-bearing request frame.
-    #[serde(default = "default_frame_cost")]
-    pub frame: u32,
-    /// One HarmonyPIR hint set (`--session-grant-hint-credits`).
-    #[serde(default = "default_hint_set_cost")]
-    pub harmony_hint_set: u32,
-}
-
-fn default_frame_cost() -> u32 {
-    1
-}
-
-fn default_hint_set_cost() -> u32 {
-    150
-}
-
-impl Default for Costs {
-    fn default() -> Self {
-        Self {
-            frame: default_frame_cost(),
-            harmony_hint_set: default_hint_set_cost(),
-        }
-    }
-}
-
-fn default_ttl() -> u64 {
-    86_400
-}
-
-/// Server-side maximum lifetime, mirrored from `pir_session_grant`, minus the
-/// tolerated clock skew so a grant issued at the limit still verifies.
-pub const MAX_GRANT_TTL_SECS: u64 =
-    pir_session_grant::MAX_LIFETIME_SECS - pir_session_grant::MAX_CLOCK_SKEW_SECS;
-
 #[derive(Debug, thiserror::Error)]
 pub enum ConfigError {
     #[error("read {0}: {1}")]
@@ -283,29 +219,6 @@ impl Config {
                     "mint URL must not end with a slash (tokens carry it without one): {mint}"
                 )));
             }
-        }
-        for offer in &self.offers {
-            if offer.credits == 0 || offer.amount == 0 || offer.unit.is_empty() {
-                return Err(ConfigError::Invalid(format!(
-                    "offer has a zero field: {offer:?}"
-                )));
-            }
-        }
-        let mut seen = std::collections::BTreeSet::new();
-        for offer in &self.offers {
-            if !seen.insert((offer.credits, offer.amount, offer.unit.clone())) {
-                return Err(ConfigError::Invalid(format!(
-                    "offer listed twice: {offer:?}"
-                )));
-            }
-        }
-        if self.grant_ttl_secs == 0 || self.grant_ttl_secs > MAX_GRANT_TTL_SECS {
-            return Err(ConfigError::Invalid(format!(
-                "grant_ttl_secs must be 1..={MAX_GRANT_TTL_SECS}"
-            )));
-        }
-        if self.costs.frame == 0 || self.costs.harmony_hint_set == 0 {
-            return Err(ConfigError::Invalid("costs must be positive".into()));
         }
         self.gas
             .params()
@@ -372,13 +285,6 @@ impl Config {
             }
         }
         Ok(())
-    }
-
-    /// The listed offer equal to `candidate`, if any. Offers are compared by
-    /// value, never by index, so a client cannot pay for one pack and name
-    /// another.
-    pub fn find_offer(&self, candidate: &Offer) -> Option<&Offer> {
-        self.offers.iter().find(|o| *o == candidate)
     }
 
     pub fn accepts_mint(&self, mint: &str) -> bool {
@@ -451,10 +357,6 @@ mod tests {
             wallet_db_path = "wallet.sqlite"
             store_path = "grants.jsonl"
             mints = ["https://mint.example"]
-            [[offers]]
-            credits = 1000
-            amount = 210
-            unit = "sat"
             "#,
         )
         .unwrap()
@@ -464,58 +366,33 @@ mod tests {
     fn sample_validates_with_defaults() {
         let c = sample();
         c.validate().unwrap();
-        assert_eq!(c.grant_ttl_secs, 86_400);
         assert!(c.cors_origins.is_empty());
-        assert_eq!(
-            c.costs,
-            Costs {
-                frame: 1,
-                harmony_hint_set: 150
-            }
-        );
         assert!(c.accepts_mint("https://mint.example/"));
         assert!(!c.accepts_mint("https://other.example"));
-        assert!(c
-            .find_offer(&Offer {
-                credits: 1000,
-                amount: 210,
-                unit: "sat".into()
-            })
-            .is_some());
-        assert!(c
-            .find_offer(&Offer {
-                credits: 1000,
-                amount: 211,
-                unit: "sat".into()
-            })
-            .is_none());
     }
 
     #[test]
-    fn no_offers_closes_v1_sales() {
-        let c: Config = toml::from_str(
-            r#"
-            listen = "127.0.0.1:8095"
-            grant_key_path = "grant.key"
-            wallet_seed_path = "wallet.seed"
-            wallet_db_path = "wallet.sqlite"
-            store_path = "grants.jsonl"
-            mints = ["https://mint.example"]
-            "#,
-        )
-        .unwrap();
-        c.validate().unwrap();
-        assert!(c.offers.is_empty());
-        assert!(c
-            .find_offer(&Offer {
-                credits: 1000,
-                amount: 210,
-                unit: "sat".into()
-            })
-            .is_none());
-        let mut c = sample();
-        c.offers.clear();
-        c.validate().unwrap();
+    fn retired_session_grant_keys_are_refused() {
+        // A config from before the retirement fails loudly at startup
+        // instead of silently selling nothing.
+        for retired in [
+            "grant_ttl_secs = 86400",
+            "[costs]\nframe = 1",
+            "[[offers]]\ncredits = 1\namount = 1\nunit = \"sat\"",
+        ] {
+            let text = format!(
+                r#"
+                listen = "127.0.0.1:8095"
+                grant_key_path = "grant.key"
+                wallet_seed_path = "wallet.seed"
+                wallet_db_path = "wallet.sqlite"
+                store_path = "grants.jsonl"
+                mints = ["https://mint.example"]
+                {retired}
+                "#
+            );
+            assert!(toml::from_str::<Config>(&text).is_err(), "{retired}");
+        }
     }
 
     #[test]
@@ -524,16 +401,7 @@ mod tests {
         c.mints = vec!["http://mint.example".into()];
         assert!(c.validate().is_err());
         let mut c = sample();
-        c.grant_ttl_secs = MAX_GRANT_TTL_SECS + 1;
-        assert!(c.validate().is_err());
-        let mut c = sample();
-        c.offers.push(c.offers[0].clone());
-        assert!(c.validate().is_err());
-        let mut c = sample();
-        c.offers[0].credits = 0;
-        assert!(c.validate().is_err());
-        let mut c = sample();
-        c.costs.harmony_hint_set = 0;
+        c.mints = vec!["https://mint.example/".into()];
         assert!(c.validate().is_err());
     }
 

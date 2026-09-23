@@ -84,7 +84,6 @@ impl TokenSummary {
 
 /// Idempotency key: SHA-256 over the domain tag and the sorted secrets, each
 /// prefixed by its byte length so no two secret lists share an encoding.
-/// The grant id is its first 16 bytes (`docs/CASHIER_API.md`).
 pub fn token_key(secrets: &[String]) -> [u8; 32] {
     let mut hasher = Sha256::new();
     hasher.update(TOKEN_KEY_DOMAIN);

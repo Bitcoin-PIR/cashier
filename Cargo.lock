@@ -372,7 +372,6 @@ dependencies = [
  "arc",
  "async-trait",
  "axum",
- "base64 0.22.1",
  "bip39",
  "cdk",
  "cdk-sqlite",
@@ -384,7 +383,6 @@ dependencies = [
  "http-body-util",
  "pir-credit",
  "pir-identity",
- "pir-session-grant",
  "rand_core 0.6.4",
  "serde",
  "serde_json",
@@ -2004,15 +2002,6 @@ source = "git+https://github.com/Bitcoin-PIR/Bitcoin-PIR.git?rev=1174240b7e5be1f
 dependencies = [
  "ed25519-dalek",
  "sha2",
-]
-
-[[package]]
-name = "pir-session-grant"
-version = "0.1.0"
-source = "git+https://github.com/Bitcoin-PIR/Bitcoin-PIR.git?rev=9433842f535482707546fa8b9a82682808d916be#9433842f535482707546fa8b9a82682808d916be"
-dependencies = [
- "ed25519-dalek",
- "hex",
 ]
 
 [[package]]

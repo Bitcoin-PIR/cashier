@@ -2,9 +2,9 @@
 //!
 //! ```text
 //! bpir-cashier serve --config /etc/bitcoinpir/cashier/config.toml
-//! bpir-cashier keygen --out grant.key            # grant signing seed (prints the pubkey to pin)
+//! bpir-cashier keygen --out grant.key            # issuer signing seed (prints the pubkey to pin)
 //! bpir-cashier wallet-seed --out wallet.seed     # Cashu wallet seed
-//! bpir-cashier pubkey --key grant.key            # print the public key for --session-grant-pubkey
+//! bpir-cashier pubkey --key grant.key            # print the public key for --credit-issuer-pubkey
 //! bpir-cashier balance --config config.toml      # ecash held per (mint, unit)
 //! bpir-cashier mnemonic --out mint.seed          # BIP39 phrase for cdk-mintd --seed-file
 //! bpir-cashier settlement --config config.toml   # gas and sat redeemed per PIR server
@@ -22,14 +22,14 @@ use bpir_cashier::api::{build_router, AppState};
 use bpir_cashier::arc::ArcIssuer;
 use bpir_cashier::cashu::CdkSwapper;
 use bpir_cashier::config::{read_seed_file, Config};
-use bpir_cashier::grant::Issuer;
+use bpir_cashier::issuer_key::IssuerKey;
 use bpir_cashier::redeem::RedeemStore;
 use bpir_cashier::store::Store;
 
 #[derive(Parser)]
 #[command(
     name = "bpir-cashier",
-    about = "BitcoinPIR cashier: session grants for Cashu ecash",
+    about = "BitcoinPIR cashier: credits for Cashu ecash",
     version
 )]
 struct Cli {
@@ -44,8 +44,8 @@ enum Command {
         #[arg(long)]
         config: PathBuf,
     },
-    /// Generate the 32-byte Ed25519 grant signing seed (mode 0600) and print
-    /// its public key, which every PIR server pins with --session-grant-pubkey.
+    /// Generate the 32-byte Ed25519 issuer signing seed (mode 0600) and print
+    /// its public key, which every PIR server pins with --credit-issuer-pubkey.
     Keygen {
         #[arg(long)]
         out: PathBuf,
@@ -55,7 +55,7 @@ enum Command {
         #[arg(long)]
         out: PathBuf,
     },
-    /// Print the public key of a grant signing seed.
+    /// Print the public key of an issuer signing seed.
     Pubkey {
         #[arg(long)]
         key: PathBuf,
@@ -109,7 +109,7 @@ fn write_secret_mode(path: &PathBuf, bytes: &[u8], mode: u32) -> anyhow::Result<
     Ok(())
 }
 
-fn load_grant_seed(path: &std::path::Path) -> anyhow::Result<[u8; 32]> {
+fn load_seed32(path: &std::path::Path) -> anyhow::Result<[u8; 32]> {
     let seed = read_seed_file(path, 32).map_err(anyhow::Error::msg)?;
     let mut out = [0u8; 32];
     out.copy_from_slice(&seed);
@@ -123,16 +123,10 @@ fn load_wallet_seed(path: &std::path::Path) -> anyhow::Result<[u8; 64]> {
     Ok(out)
 }
 
-/// Wallet units: every `/v1` offer's unit, plus `sat`. The `/v2` paths
-/// (Cashu items on `/v2/redeem`, `/v2/credentials`) take sat tokens only and
-/// must keep working with `/v1` sales closed (no `offers`), so `sat` is
-/// always there.
-fn units(config: &Config) -> Vec<String> {
-    let mut units: Vec<String> = config.offers.iter().map(|o| o.unit.clone()).collect();
-    units.push("sat".to_string());
-    units.sort();
-    units.dedup();
-    units
+/// Wallet units: the `/v2` paths (Cashu items on `/v2/redeem`,
+/// `/v2/credentials`) take sat tokens only.
+fn wallet_units() -> Vec<String> {
+    vec!["sat".to_string()]
 }
 
 #[tokio::main]
@@ -147,12 +141,12 @@ async fn main() -> anyhow::Result<()> {
             let mut seed = zeroize::Zeroizing::new([0u8; 32]);
             getrandom::getrandom(seed.as_mut()).map_err(|e| anyhow::anyhow!("getrandom: {e}"))?;
             write_secret(&out, seed.as_ref())?;
-            let issuer = Issuer::new(&seed, 1);
+            let issuer = IssuerKey::new(&seed);
             eprintln!(
-                "wrote grant signing seed (32 bytes, mode 0600) to {}",
+                "wrote issuer signing seed (32 bytes, mode 0600) to {}",
                 out.display()
             );
-            eprintln!("public key (pin on every PIR server with --session-grant-pubkey):");
+            eprintln!("public key (pin on every PIR server with --credit-issuer-pubkey):");
             println!("{}", issuer.public_key_hex());
         }
         Command::WalletSeed { out } => {
@@ -165,8 +159,8 @@ async fn main() -> anyhow::Result<()> {
             );
         }
         Command::Pubkey { key } => {
-            let seed = zeroize::Zeroizing::new(load_grant_seed(&key)?);
-            println!("{}", Issuer::new(&seed, 1).public_key_hex());
+            let seed = zeroize::Zeroizing::new(load_seed32(&key)?);
+            println!("{}", IssuerKey::new(&seed).public_key_hex());
         }
         Command::Mnemonic { out, words } => {
             anyhow::ensure!(
@@ -191,7 +185,7 @@ async fn main() -> anyhow::Result<()> {
                 &config.wallet_db_path,
                 *seed,
                 &config.mints,
-                &units(&config),
+                &wallet_units(),
                 std::time::Duration::from_secs(30),
             )
             .await?;
@@ -224,14 +218,14 @@ async fn main() -> anyhow::Result<()> {
         }
         Command::Serve { config } => {
             let config = Config::load(&config)?;
-            let grant_seed = zeroize::Zeroizing::new(load_grant_seed(&config.grant_key_path)?);
-            let issuer = Issuer::new(&grant_seed, config.grant_ttl_secs);
+            let issuer_seed = zeroize::Zeroizing::new(load_seed32(&config.grant_key_path)?);
+            let issuer = IssuerKey::new(&issuer_seed);
             let wallet_seed = zeroize::Zeroizing::new(load_wallet_seed(&config.wallet_seed_path)?);
             let swapper = CdkSwapper::open(
                 &config.wallet_db_path,
                 *wallet_seed,
                 &config.mints,
-                &units(&config),
+                &wallet_units(),
                 std::time::Duration::from_secs(45),
             )
             .await?;
@@ -240,7 +234,7 @@ async fn main() -> anyhow::Result<()> {
             let operator_keys = config.operator_keys();
             let arc = match &config.arc {
                 Some(arc_config) => {
-                    let seed = zeroize::Zeroizing::new(load_grant_seed(&arc_config.seed_path)?);
+                    let seed = zeroize::Zeroizing::new(load_seed32(&arc_config.seed_path)?);
                     Some(ArcIssuer::new(
                         *seed,
                         arc_config.epoch_secs,
@@ -261,9 +255,6 @@ async fn main() -> anyhow::Result<()> {
                 listen = %config.listen,
                 cashier_pubkey_hex = %issuer.public_key_hex(),
                 mints = ?config.mints,
-                offers = config.offers.len(),
-                grant_ttl_secs = config.grant_ttl_secs,
-                issued_grants = store.issued_count(),
                 redeemed_tokens = store.redeemed_count(),
                 store = %store.path().display(),
                 redeem_store = %redeem_store.path().display(),
@@ -300,37 +291,10 @@ async fn main() -> anyhow::Result<()> {
 mod tests {
     use super::*;
 
-    fn config(offers: &str) -> Config {
-        toml::from_str(&format!(
-            r#"
-            listen = "127.0.0.1:8095"
-            grant_key_path = "grant.key"
-            wallet_seed_path = "wallet.seed"
-            wallet_db_path = "wallet.sqlite"
-            store_path = "grants.jsonl"
-            mints = ["https://mint.example"]
-            {offers}
-            "#
-        ))
-        .unwrap()
-    }
-
     #[test]
-    fn sat_wallet_exists_with_v1_sales_closed() {
-        // Regression: with no `[[offers]]` the cashier opened no wallet at
-        // all, and `/v2/credentials` refused every token with
-        // "no wallet for <mint> (sat)".
-        assert_eq!(units(&config("")), vec!["sat".to_string()]);
-    }
-
-    #[test]
-    fn offer_units_are_kept_and_deduplicated() {
-        let sat = "[[offers]]\ncredits = 1000\namount = 210\nunit = \"sat\"";
-        assert_eq!(units(&config(sat)), vec!["sat".to_string()]);
-        let usd = "[[offers]]\ncredits = 10\namount = 1\nunit = \"usd\"";
-        assert_eq!(
-            units(&config(usd)),
-            vec!["sat".to_string(), "usd".to_string()]
-        );
+    fn the_wallet_takes_sat() {
+        // Regression: a wallet opened only for `/v1` offer units left the
+        // `/v2` paths without one ("no wallet for <mint> (sat)").
+        assert_eq!(wallet_units(), vec!["sat".to_string()]);
     }
 }
